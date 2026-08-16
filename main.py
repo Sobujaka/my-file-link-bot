@@ -1,14 +1,18 @@
 import os
 import asyncio
 import re
-from hydrogram import Client, filters
-from hydrogram.types import Message
+from pyrogram import Client, filters
+from pyrogram.types import Message
 from aiohttp import web
 
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
+
+# Custom Async Loop to fix Python 3.14 issues on Render
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 app = Client("stream_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 media_cache = {}
@@ -17,7 +21,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/")
 async def root_handler(request):
-    return web.Response(text="Bot is Live!")
+    return web.Response(text="Stream Server is Running Perfectly!")
 
 @routes.get("/watch/{msg_id}")
 async def watch_handler(request):
@@ -26,11 +30,11 @@ async def watch_handler(request):
     
     html = f"""
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Fast Player</title>
+        <title>Fast Stream Player</title>
         <style>
             * {{ margin:0; padding:0; box-sizing:border-box; }}
             html, body {{ width:100vw; height:100vh; background:#000; overflow:hidden; display:flex; align-items:center; justify-content:center; }}
@@ -40,7 +44,7 @@ async def watch_handler(request):
     <body>
         <video controls autoplay playsinline controlsList="nodownload">
             <source src="{stream_url}">
-            Your browser does not support video playback.
+            Your browser does not support playing this video format.
         </video>
     </body>
     </html>
@@ -54,7 +58,7 @@ async def stream_handler(request):
         msg = media_cache.get(msg_id)
         
         if not msg:
-            return web.Response(status=404, text="Video expired. Please send the video to bot again.")
+            return web.Response(status=404, text="Video expired or Server Restarted. Send video to bot again.")
 
         media = msg.video or msg.document or msg.animation
         file_size = media.file_size
@@ -85,6 +89,7 @@ async def stream_handler(request):
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
+            # 1MB Chunk High-Speed Pipeline for Large Videos
             async for chunk in app.stream_media(msg, offset=start, limit=length):
                 await response.write(chunk)
                 
@@ -120,7 +125,7 @@ async def handle_video(client, message: Message):
     watch_url = f"{app_url}/watch/{message.id}"
     await message.reply_text(f"🎬 **Stream Link:**\n\n{watch_url}")
 
-async def start_services():
+async def main():
     await app.start()
     server = web.Application()
     server.add_routes(routes)
@@ -131,5 +136,7 @@ async def start_services():
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_services())
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
