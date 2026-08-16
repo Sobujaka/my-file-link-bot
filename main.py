@@ -18,7 +18,6 @@ routes = web.RouteTableDef()
 async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-# ১. ফুলস্ক্রিন প্লেয়ার (ডাউনলোড বাটন মুক্ত)
 @routes.get("/watch/{msg_id}")
 async def player_handler(request):
     msg_id = int(request.match_info['msg_id'])
@@ -47,7 +46,6 @@ async def player_handler(request):
     """
     return web.Response(text=html_content, content_type='text/html')
 
-# ২. ডাইরেক্ট ফার্স্ট-বাইট স্ট্রিমার
 @routes.get("/stream/{msg_id}")
 async def stream_handler(request):
     try:
@@ -55,7 +53,7 @@ async def stream_handler(request):
         msg = file_store.get(msg_id)
         
         if not msg or not msg.media:
-            return web.Response(status=404, text="File not found or bot restarted")
+            return web.Response(status=404, text="File not found")
 
         file_size = getattr(msg.file, 'size', 0)
         file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
@@ -125,7 +123,7 @@ async def handle_files(event):
     elif event.raw_text.startswith('/start'):
         await event.reply("👋 **Send me any video to stream.**")
 
-async def main():
+async def start_app():
     await bot.start(bot_token=BOT_TOKEN)
     app = web.Application()
     app.add_routes(routes)
@@ -136,4 +134,9 @@ async def main():
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(start_app())
+    except KeyboardInterrupt:
+        pass
