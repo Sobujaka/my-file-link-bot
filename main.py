@@ -18,7 +18,7 @@ routes = web.RouteTableDef()
 async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-# ১. ফুলস্ক্রিন Plyr ভিডিও প্লেয়ার (ডাউনলোড বাটন ছাড়া)
+# ১. ফুলস্ক্রিন HLS.js প্লেয়ার (ডাউনলোড বাটন সম্পূর্ণ মুক্ত)
 @routes.get("/watch/{msg_id}")
 async def player_handler(request):
     msg_id = int(request.match_info['msg_id'])
@@ -30,35 +30,45 @@ async def player_handler(request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Full Player Stream</title>
-        <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+        <title>Universal Video Stream</title>
+        <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
         <style>
             * {{ box-sizing: border-box; margin: 0; padding: 0; }}
             html, body {{ width: 100vw; height: 100vh; background-color: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
-            .plyr {{ width: 100vw !important; height: 100vh !important; }}
-            video {{ width: 100% !important; height: 100% !important; object-fit: contain; }}
+            video {{ width: 100vw; height: 100vh; object-fit: contain; outline: none; }}
         </style>
     </head>
     <body>
-        <video id="player" controls autoplay playsinline controlsList="nodownload">
-            <source src="{stream_url}" type="video/mp4" />
-            <source src="{stream_url}" type="video/webm" />
-            <source src="{stream_url}" type="video/x-matroska" />
-        </video>
-        <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+        <video id="video" controls autoplay playsinline controlsList="nodownload"></video>
         <script>
-            const player = new Plyr('#player', {{
-                controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'fullscreen'],
-                autoplay: true,
-                hideControls: true
-            }});
+            const video = document.getElementById('video');
+            const videoSrc = '{stream_url}';
+
+            if (Hls.isSupported()) {{
+                const hls = new Hls({{
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                }});
+                hls.loadSource(videoSrc);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {{
+                    video.play();
+                }});
+            }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
+                video.src = videoSrc;
+                video.addEventListener('loadedmetadata', function() {{
+                    video.play();
+                }});
+            }} else {{
+                video.src = videoSrc;
+            }}
         </script>
     </body>
     </html>
     """
     return web.Response(text=html_content, content_type='text/html')
 
-# ২. সঠিক Telethon Range Streaming (offset_bytes ফিক্স)
+# ২. পারফেক্ট Range Chunk Streamer
 @routes.get("/stream/{msg_id}")
 async def stream_handler(request):
     try:
@@ -98,8 +108,7 @@ async def stream_handler(request):
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
-            # offset_bytes পারামিটার ব্যবহার করা হয়েছে যা সঠিক বাইট রেঞ্জ পাঠাবে
-            async for chunk in bot.iter_download(msg.media, offset_bytes=start, limit=content_length, request_size=128 * 1024):
+            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length, request_size=256 * 1024):
                 await response.write(chunk)
                 
             return response
@@ -114,7 +123,7 @@ async def stream_handler(request):
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        async for chunk in bot.iter_download(msg.media, request_size=128 * 1024):
+        async for chunk in bot.iter_download(msg.media, request_size=256 * 1024):
             await response.write(chunk)
             
         return response
