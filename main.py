@@ -10,20 +10,23 @@ PORT = int(os.environ.get("PORT", 8080))
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
 
+# ইন-মেমোরি মেসেজ স্টোরেজ
+file_store = {}
+
 routes = web.RouteTableDef()
 
 @routes.get("/")
 async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-@routes.get("/download/{message_id}")
+@routes.get("/download/{msg_id}")
 async def stream_handler(request):
     try:
-        message_id = int(request.match_info['message_id'])
-        msg = await bot.get_messages("me", ids=message_id)
+        msg_id = int(request.match_info['msg_id'])
+        msg = file_store.get(msg_id)
         
         if not msg or not msg.media:
-            return web.Response(status=404, text="File not found")
+            return web.Response(status=404, text="File not found or expired")
 
         file_name = getattr(msg.file, 'name', 'file.mp4') or 'file.mp4'
         mime_type = getattr(msg.file, 'mime_type', 'application/octet-stream')
@@ -44,15 +47,22 @@ async def stream_handler(request):
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
-@bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private and (e.document or e.video or e.audio)))
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_files(event):
-    msg = await event.message.forward_to("me")
-    app_url = os.environ.get("APP_URL", "")
-    if not app_url:
-        app_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
+    if event.message.media:
+        # মেসেজ অবজেক্ট ক্যাশে রাখা
+        file_store[event.message.id] = event.message
+        
+        host_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
+        if host_name:
+            app_url = f"https://{host_name}"
+        else:
+            app_url = os.environ.get("APP_URL", "http://localhost:8080")
 
-    link = f"{app_url}/download/{msg.id}"
-    await event.reply(f"📥 **Here is your Direct Download Link:**\n\n{link}")
+        link = f"{app_url}/download/{event.message.id}"
+        await event.reply(f"📥 **Here is your Direct Download Link:**\n\n{link}")
+    elif event.raw_text.startswith('/start'):
+        await event.reply("👋 **Welcome! Send me any file or video to get a direct link.**")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)
