@@ -1,5 +1,6 @@
 import os
 import asyncio
+import re
 from telethon import TelegramClient, events
 from aiohttp import web
 
@@ -9,7 +10,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
-
 file_store = {}
 
 routes = web.RouteTableDef()
@@ -18,7 +18,7 @@ routes = web.RouteTableDef()
 async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-# ১. সম্পূর্ণ ডিসপ্লে জুড়ে ফুলস্ক্রিন প্লেয়ার (ডাউনলোড অপশন ছাড়া)
+# ১. ফুলস্ক্রিন প্লেয়ার পেজ (ডাউনলোড বাটন মুক্ত)
 @routes.get("/watch/{msg_id}")
 async def player_handler(request):
     msg_id = int(request.match_info['msg_id'])
@@ -26,28 +26,43 @@ async def player_handler(request):
     
     html_content = f"""
     <!DOCTYPE html>
-    <html lang="bn">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Stream Player</title>
+        <title>Full Player Stream</title>
+        <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
+        <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
         <style>
             * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            html, body {{ width: 100%; height: 100%; background-color: #000000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
-            video {{ width: 100vw; height: 100vh; object-fit: contain; background: #000; outline: none; }}
+            html, body {{ width: 100vw; height: 100vh; background-color: #000; overflow: hidden; }}
+            .video-js {{ width: 100vw !important; height: 100vh !important; }}
+            .vjs-control-bar {{ background: rgba(0, 0, 0, 0.7) !important; }}
         </style>
     </head>
     <body>
-        <video controls autoplay playsinline controlsList="nodownload">
-            <source src="{stream_url}">
-            Your browser does not support video playback.
+        <video id="my-video" class="video-js vjs-big-play-centered" controls autoplay playsinline data-setup='{{}}'>
+            <source src="{stream_url}" type="video/mp4" />
         </video>
+        <script>
+            const player = videojs('my-video', {{
+                responsive: true,
+                fluid: false
+            }});
+            // কন্ট্রোল থেকে ডাউনলোড এবং কাস্টম মেনু দূর করা
+            player.ready(function() {{
+                const tech = player.tech({{ IWillNotUseThisInPlugins: true }});
+                if (tech && tech.el_) {{
+                    tech.el_.setAttribute('controlsList', 'nodownload');
+                }}
+            }});
+        </script>
     </body>
     </html>
     """
     return web.Response(text=html_content, content_type='text/html')
 
-# ২. ভিডিও স্ট্রিম ও ডাইনামিক MIME-Type হ্যান্ডলার
+# ২. Range Requests এবং Chunk Streaming হ্যান্ডলার
 @routes.get("/stream/{msg_id}")
 async def stream_handler(request):
     try:
@@ -57,32 +72,54 @@ async def stream_handler(request):
         if not msg or not msg.media:
             return web.Response(status=404, text="File not found")
 
+        file_size = getattr(msg.file, 'size', 0)
         file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
-        mime_type = getattr(msg.file, 'mime_type', '')
-
-        # অডিও-অনলি সমস্যা দূর করার জন্য সঠিক ভিডিও মাইম টাইপ নির্ধারণ
-        if not mime_type or 'video' not in mime_type:
-            if file_name.endswith('.mkv'):
-                mime_type = 'video/x-matroska'
-            elif file_name.endswith('.webm'):
-                mime_type = 'video/webm'
+        
+        range_header = request.headers.get('Range')
+        
+        if range_header:
+            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                start = int(match.group(1))
+                end = int(match.group(2)) if match.group(2) else file_size - 1
             else:
-                mime_type = 'video/mp4'
-
-        response = web.StreamResponse(
-            status=200,
-            headers={
-                'Content-Type': mime_type,
-                'Content-Disposition': f'inline; filename="{file_name}"',
-                'Accept-Ranges': 'bytes'
+                start = 0
+                end = file_size - 1
+            
+            end = min(end, file_size - 1)
+            content_length = (end - start) + 1
+            
+            headers = {
+                'Content-Type': 'video/mp4',
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Accept-Ranges': 'bytes',
+                'Content-Length': str(content_length),
+                'Content-Disposition': f'inline; filename="{file_name}"'
             }
-        )
+            
+            response = web.StreamResponse(status=206, headers=headers)
+            await response.prepare(request)
+            
+            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length):
+                await response.write(chunk)
+                
+            return response
+
+        # সাধারণ ফ্রেচ হুক
+        headers = {
+            'Content-Type': 'video/mp4',
+            'Content-Length': str(file_size),
+            'Accept-Ranges': 'bytes',
+            'Content-Disposition': f'inline; filename="{file_name}"'
+        }
+        response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
         async for chunk in bot.iter_download(msg.media):
             await response.write(chunk)
             
         return response
+
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
@@ -100,7 +137,7 @@ async def handle_files(event):
         watch_link = f"{app_url}/watch/{event.message.id}"
         await event.reply(f"🎬 **Stream Link:**\n\n{watch_link}")
     elif event.raw_text.startswith('/start'):
-        await event.reply("👋 **Welcome! Send me any video to stream.**")
+        await event.reply("👋 **Send me any video file.**")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)
