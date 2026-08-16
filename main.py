@@ -10,7 +10,6 @@ PORT = int(os.environ.get("PORT", 8080))
 
 bot = TelegramClient('bot_session', API_ID, API_HASH)
 
-# ইন-মেমোরি মেসেজ স্টোরেজ
 file_store = {}
 
 routes = web.RouteTableDef()
@@ -28,14 +27,16 @@ async def stream_handler(request):
         if not msg or not msg.media:
             return web.Response(status=404, text="File not found or expired")
 
-        file_name = getattr(msg.file, 'name', 'file.mp4') or 'file.mp4'
-        mime_type = getattr(msg.file, 'mime_type', 'application/octet-stream')
+        file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
+        mime_type = getattr(msg.file, 'mime_type', 'video/mp4')
 
+        # Content-Disposition: inline করার মাধ্যমে ডাউনলোড না হয়ে ব্রাউজারে ভিডিও প্লে হবে
         response = web.StreamResponse(
             status=200,
             headers={
                 'Content-Type': mime_type,
-                'Content-Disposition': f'attachment; filename="{file_name}"'
+                'Content-Disposition': f'inline; filename="{file_name}"',
+                'Accept-Ranges': 'bytes'
             }
         )
         await response.prepare(request)
@@ -50,7 +51,6 @@ async def stream_handler(request):
 @bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_files(event):
     if event.message.media:
-        # মেসেজ অবজেক্ট ক্যাশে রাখা
         file_store[event.message.id] = event.message
         
         host_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
@@ -60,9 +60,9 @@ async def handle_files(event):
             app_url = os.environ.get("APP_URL", "http://localhost:8080")
 
         link = f"{app_url}/download/{event.message.id}"
-        await event.reply(f"📥 **Here is your Direct Download Link:**\n\n{link}")
+        await event.reply(f"🎬 **Here is your Direct Stream / Play Link:**\n\n{link}")
     elif event.raw_text.startswith('/start'):
-        await event.reply("👋 **Welcome! Send me any file or video to get a direct link.**")
+        await event.reply("👋 **Welcome! Send me any video to get a direct streaming link.**")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)
