@@ -18,7 +18,7 @@ routes = web.RouteTableDef()
 async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-# ১. ফুলস্ক্রিন প্লেয়ার পেজ (ডাউনলোড বাটন মুক্ত)
+# ১. ফুলস্ক্রিন Plyr ভিডিও প্লেয়ার (ডাউনলোড বাটন ছাড়া)
 @routes.get("/watch/{msg_id}")
 async def player_handler(request):
     msg_id = int(request.match_info['msg_id'])
@@ -26,35 +26,31 @@ async def player_handler(request):
     
     html_content = f"""
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="bn">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Full Player Stream</title>
-        <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
-        <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
+        <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
         <style>
             * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            html, body {{ width: 100vw; height: 100vh; background-color: #000; overflow: hidden; }}
-            .video-js {{ width: 100vw !important; height: 100vh !important; }}
-            .vjs-control-bar {{ background: rgba(0, 0, 0, 0.7) !important; }}
+            html, body {{ width: 100vw; height: 100vh; background-color: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
+            .plyr {{ width: 100vw !important; height: 100vh !important; }}
+            video {{ width: 100% !important; height: 100% !important; object-fit: contain; }}
         </style>
     </head>
     <body>
-        <video id="my-video" class="video-js vjs-big-play-centered" controls autoplay playsinline data-setup='{{}}'>
+        <video id="player" controls autoplay playsinline controlsList="nodownload">
             <source src="{stream_url}" type="video/mp4" />
+            <source src="{stream_url}" type="video/webm" />
+            <source src="{stream_url}" type="video/x-matroska" />
         </video>
+        <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
         <script>
-            const player = videojs('my-video', {{
-                responsive: true,
-                fluid: false
-            }});
-            // কন্ট্রোল থেকে ডাউনলোড এবং কাস্টম মেনু দূর করা
-            player.ready(function() {{
-                const tech = player.tech({{ IWillNotUseThisInPlugins: true }});
-                if (tech && tech.el_) {{
-                    tech.el_.setAttribute('controlsList', 'nodownload');
-                }}
+            const player = new Plyr('#player', {{
+                controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'fullscreen'],
+                autoplay: true,
+                hideControls: true
             }});
         </script>
     </body>
@@ -62,7 +58,7 @@ async def player_handler(request):
     """
     return web.Response(text=html_content, content_type='text/html')
 
-# ২. Range Requests এবং Chunk Streaming হ্যান্ডলার
+# ২. সঠিক Telethon Range Streaming (offset_bytes ফিক্স)
 @routes.get("/stream/{msg_id}")
 async def stream_handler(request):
     try:
@@ -74,7 +70,8 @@ async def stream_handler(request):
 
         file_size = getattr(msg.file, 'size', 0)
         file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
-        
+        mime_type = getattr(msg.file, 'mime_type', 'video/mp4') or 'video/mp4'
+
         range_header = request.headers.get('Range')
         
         if range_header:
@@ -85,37 +82,39 @@ async def stream_handler(request):
             else:
                 start = 0
                 end = file_size - 1
-            
+
             end = min(end, file_size - 1)
             content_length = (end - start) + 1
             
             headers = {
-                'Content-Type': 'video/mp4',
+                'Content-Type': mime_type,
                 'Content-Range': f'bytes {start}-{end}/{file_size}',
                 'Accept-Ranges': 'bytes',
                 'Content-Length': str(content_length),
-                'Content-Disposition': f'inline; filename="{file_name}"'
+                'Content-Disposition': f'inline; filename="{file_name}"',
+                'Access-Control-Allow-Origin': '*'
             }
             
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
-            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length):
+            # offset_bytes পারামিটার ব্যবহার করা হয়েছে যা সঠিক বাইট রেঞ্জ পাঠাবে
+            async for chunk in bot.iter_download(msg.media, offset_bytes=start, limit=content_length, request_size=128 * 1024):
                 await response.write(chunk)
                 
             return response
 
-        # সাধারণ ফ্রেচ হুক
         headers = {
-            'Content-Type': 'video/mp4',
+            'Content-Type': mime_type,
             'Content-Length': str(file_size),
             'Accept-Ranges': 'bytes',
-            'Content-Disposition': f'inline; filename="{file_name}"'
+            'Content-Disposition': f'inline; filename="{file_name}"',
+            'Access-Control-Allow-Origin': '*'
         }
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        async for chunk in bot.iter_download(msg.media):
+        async for chunk in bot.iter_download(msg.media, request_size=128 * 1024):
             await response.write(chunk)
             
         return response
@@ -137,7 +136,7 @@ async def handle_files(event):
         watch_link = f"{app_url}/watch/{event.message.id}"
         await event.reply(f"🎬 **Stream Link:**\n\n{watch_link}")
     elif event.raw_text.startswith('/start'):
-        await event.reply("👋 **Send me any video file.**")
+        await event.reply("👋 **Send me any video file to stream.**")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)
