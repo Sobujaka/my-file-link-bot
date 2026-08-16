@@ -30,17 +30,17 @@ async def player_handler(request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Video Stream</title>
+        <title>Large Video Stream</title>
         <style>
             * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            html, body {{ width: 100vw; height: 100vh; background-color: #000000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
+            html, body {{ width: 100vw; height: 100vh; background-color: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
             video {{ width: 100vw; height: 100vh; object-fit: contain; outline: none; }}
         </style>
     </head>
     <body>
         <video controls autoplay playsinline controlsList="nodownload">
             <source src="{stream_url}" type="video/mp4">
-            Your browser does not support the video tag.
+            Your browser does not support playing this video format.
         </video>
     </body>
     </html>
@@ -54,7 +54,7 @@ async def stream_handler(request):
         msg = file_store.get(msg_id)
         
         if not msg or not msg.media:
-            return web.Response(status=404, text="File not found")
+            return web.Response(status=404, text="File expired or bot restarted")
 
         file_size = getattr(msg.file, 'size', 0)
         file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
@@ -85,8 +85,10 @@ async def stream_handler(request):
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
-            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length, request_size=128 * 1024):
+            # বড় ফাইলের জন্য ছোট ৬৪ KB চাংক দিয়ে RAM সাশ্রয়
+            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length, request_size=64 * 1024):
                 await response.write(chunk)
+                await response.drain() # ব্রাউজারে সাথে সাথে ডাটা ফ্লাশ করা
                 
             return response
 
@@ -100,8 +102,9 @@ async def stream_handler(request):
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        async for chunk in bot.iter_download(msg.media, request_size=128 * 1024):
+        async for chunk in bot.iter_download(msg.media, request_size=64 * 1024):
             await response.write(chunk)
+            await response.drain()
             
         return response
 
@@ -130,7 +133,6 @@ async def start_app():
             await bot.start(bot_token=BOT_TOKEN)
             break
         except FloodWaitError as e:
-            print(f"Waiting for {e.seconds} seconds due to Flood Wait...")
             await asyncio.sleep(e.seconds + 5)
 
     app = web.Application()
