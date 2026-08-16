@@ -3,9 +3,9 @@ from pyrogram import Client, filters
 from aiohttp import web
 
 # Telegram Credentials
-API_ID = int(os.environ.get("API_ID", "YOUR_API_ID"))
-API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+API_ID = int(os.environ.get("API_ID", "37484134"))
+API_HASH = os.environ.get("API_HASH", "c160f92f8c0ff73632e05138f0d32997")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8832724574:AAFbc_9e8cyIDxoQr9nr7B36P4gFR2RkdT4")
 PORT = int(os.environ.get("PORT", 8080))
 
 bot = Client("FileToLinkBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
