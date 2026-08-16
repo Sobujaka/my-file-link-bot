@@ -1,67 +1,64 @@
 import os
 import asyncio
 import re
-from pyrogram import Client, filters
-from pyrogram.types import Message
+from telethon import TelegramClient, events
 from aiohttp import web
 
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
-CHANNEL_ID = os.environ.get("CHANNEL_ID", "") # অপশনাল, না দিলে মেমোরিতে কাজ করবে
 
-app = Client("stream_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-media_cache = {}
+bot = TelegramClient('bot_session', API_ID, API_HASH)
+file_store = {}
 
 routes = web.RouteTableDef()
 
 @routes.get("/")
-async def root_handler(request):
+async def root_route_handler(request):
     return web.Response(text="Bot is Live and Running!")
 
-# ১. ফুলস্কিন কাস্টম ভিডিও প্লেয়ার (ডাউনলোড অপশন মুক্ত)
+# ১. ফুলস্ক্রিন প্লেয়ার (ডাউনলোড বাটন মুক্ত)
 @routes.get("/watch/{msg_id}")
-async def watch_handler(request):
+async def player_handler(request):
     msg_id = int(request.match_info['msg_id'])
     stream_url = f"/stream/{msg_id}"
     
-    html = f"""
+    html_content = f"""
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Full Player</title>
+        <title>Video Stream</title>
         <style>
-            * {{ margin:0; padding:0; box-sizing:border-box; }}
-            html, body {{ width:100vw; height:100vh; background:#000; overflow:hidden; display:flex; align-items:center; justify-content:center; }}
-            video {{ width:100vw; height:100vh; object-fit:contain; outline:none; }}
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+            html, body {{ width: 100vw; height: 100vh; background-color: #000000; overflow: hidden; display: flex; align-items: center; justify-content: center; }}
+            video {{ width: 100vw; height: 100vh; object-fit: contain; outline: none; }}
         </style>
     </head>
     <body>
         <video controls autoplay playsinline controlsList="nodownload">
-            <source src="{stream_url}">
-            Your browser does not support playing this video.
+            <source src="{stream_url}" type="video/mp4">
+            Your browser does not support the video tag.
         </video>
     </body>
     </html>
     """
-    return web.Response(text=html, content_type='text/html')
+    return web.Response(text=html_content, content_type='text/html')
 
-# ২. ফাস্ট হাই-স্পিড ভিডিও স্ট্রিমার
+# ২. ডাইরেক্ট ফার্স্ট-বাইট স্ট্রিমার
 @routes.get("/stream/{msg_id}")
 async def stream_handler(request):
     try:
         msg_id = int(request.match_info['msg_id'])
-        msg = media_cache.get(msg_id)
+        msg = file_store.get(msg_id)
         
-        if not msg:
-            return web.Response(status=404, text="Video media expired. Please send video again to Telegram bot.")
+        if not msg or not msg.media:
+            return web.Response(status=404, text="File not found or bot restarted")
 
-        media = msg.video or msg.document
-        file_size = media.file_size
-        mime_type = media.mime_type or "video/mp4"
+        file_size = getattr(msg.file, 'size', 0)
+        file_name = getattr(msg.file, 'name', 'video.mp4') or 'video.mp4'
 
         range_header = request.headers.get('Range')
         
@@ -75,34 +72,36 @@ async def stream_handler(request):
                 end = file_size - 1
 
             end = min(end, file_size - 1)
-            length = (end - start) + 1
+            content_length = (end - start) + 1
             
             headers = {
-                'Content-Type': mime_type,
+                'Content-Type': 'video/mp4',
                 'Content-Range': f'bytes {start}-{end}/{file_size}',
                 'Accept-Ranges': 'bytes',
-                'Content-Length': str(length),
+                'Content-Length': str(content_length),
+                'Content-Disposition': f'inline; filename="{file_name}"',
                 'Access-Control-Allow-Origin': '*'
             }
             
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
-            async for chunk in app.stream_media(msg, offset=start, limit=length):
+            async for chunk in bot.iter_download(msg.media, offset=start, limit=content_length, request_size=128 * 1024):
                 await response.write(chunk)
                 
             return response
 
         headers = {
-            'Content-Type': mime_type,
+            'Content-Type': 'video/mp4',
             'Content-Length': str(file_size),
             'Accept-Ranges': 'bytes',
+            'Content-Disposition': f'inline; filename="{file_name}"',
             'Access-Control-Allow-Origin': '*'
         }
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        async for chunk in app.stream_media(msg):
+        async for chunk in bot.iter_download(msg.media, request_size=128 * 1024):
             await response.write(chunk)
             
         return response
@@ -110,29 +109,31 @@ async def stream_handler(request):
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
-@app.on_message(filters.private & (filters.video | filters.document))
-async def handle_video(client, message: Message):
-    media_cache[message.id] = message
-    
-    host_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
-    if host_name:
-        app_url = f"https://{host_name}"
-    else:
-        app_url = os.environ.get("APP_URL", "http://localhost:8080")
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
+async def handle_files(event):
+    if event.message.media:
+        file_store[event.message.id] = event.message
+        
+        host_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
+        if host_name:
+            app_url = f"https://{host_name}"
+        else:
+            app_url = os.environ.get("APP_URL", "http://localhost:8080")
 
-    watch_url = f"{app_url}/watch/{message.id}"
-    await message.reply_text(f"🎬 **Stream Link:**\n\n{watch_url}")
+        watch_link = f"{app_url}/watch/{event.message.id}"
+        await event.reply(f"🎬 **Stream Link:**\n\n{watch_link}")
+    elif event.raw_text.startswith('/start'):
+        await event.reply("👋 **Send me any video to stream.**")
 
-async def start_services():
-    await app.start()
-    server = web.Application()
-    server.add_routes(routes)
-    runner = web.AppRunner(server)
+async def main():
+    await bot.start(bot_token=BOT_TOKEN)
+    app = web.Application()
+    app.add_routes(routes)
+    runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_services())
+    asyncio.run(main())
