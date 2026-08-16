@@ -2,6 +2,7 @@ import os
 import asyncio
 import re
 from telethon import TelegramClient, events
+from telethon.errors import FloodWaitError
 from aiohttp import web
 
 API_ID = int(os.environ.get("API_ID", 0))
@@ -124,7 +125,14 @@ async def handle_files(event):
         await event.reply("👋 **Send me any video to stream.**")
 
 async def start_app():
-    await bot.start(bot_token=BOT_TOKEN)
+    while True:
+        try:
+            await bot.start(bot_token=BOT_TOKEN)
+            break
+        except FloodWaitError as e:
+            print(f"Waiting for {e.seconds} seconds due to Flood Wait...")
+            await asyncio.sleep(e.seconds + 5)
+
     app = web.Application()
     app.add_routes(routes)
     runner = web.AppRunner(app)
