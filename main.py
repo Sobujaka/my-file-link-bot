@@ -3,9 +3,9 @@ import asyncio
 from pyrogram import Client, filters
 from aiohttp import web
 
-API_ID = int(os.environ.get("37484134", 0))
-API_HASH = os.environ.get("c160f92f8c0ff73632e05138f0d32997", "")
-BOT_TOKEN = os.environ.get("8832724574:AAFbc_9e8cyIDxoQr9nr7B36P4gFR2RkdT4", "")
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 
 bot = Client(
