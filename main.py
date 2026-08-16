@@ -1,6 +1,6 @@
 import os
 import asyncio
-from pyrogram import Client, filters
+from telethon import TelegramClient, events
 from aiohttp import web
 
 API_ID = int(os.environ.get("API_ID", 0))
@@ -8,12 +8,7 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 
-bot = Client(
-    "FileToLinkBot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+bot = TelegramClient('bot_session', API_ID, API_HASH)
 
 routes = web.RouteTableDef()
 
@@ -25,40 +20,42 @@ async def root_route_handler(request):
 async def stream_handler(request):
     try:
         message_id = int(request.match_info['message_id'])
-        msg = await bot.get_messages("me", message_id)
+        msg = await bot.get_messages("me", ids=message_id)
         
-        media = msg.video or msg.document or msg.audio
-        if not media:
+        if not msg or not msg.media:
             return web.Response(status=404, text="File not found")
+
+        file_name = getattr(msg.file, 'name', 'file.mp4') or 'file.mp4'
+        mime_type = getattr(msg.file, 'mime_type', 'application/octet-stream')
 
         response = web.StreamResponse(
             status=200,
             headers={
-                'Content-Type': getattr(media, 'mime_type', 'application/octet-stream'),
-                'Content-Disposition': f'attachment; filename="{getattr(media, "file_name", "file.mp4")}"'
+                'Content-Type': mime_type,
+                'Content-Disposition': f'attachment; filename="{file_name}"'
             }
         )
         await response.prepare(request)
         
-        async for chunk in bot.stream_media(msg):
+        async for chunk in bot.iter_download(msg.media):
             await response.write(chunk)
             
         return response
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
-@bot.on_message(filters.private & (filters.document | filters.video | filters.audio))
-async def handle_files(client, message):
-    msg = await message.forward("me")
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.is_private and (e.document or e.video or e.audio)))
+async def handle_files(event):
+    msg = await event.message.forward_to("me")
     app_url = os.environ.get("APP_URL", "")
     if not app_url:
         app_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
 
     link = f"{app_url}/download/{msg.id}"
-    await message.reply_text(f"📥 **Here is your Direct Download Link:**\n\n{link}")
+    await event.reply(f"📥 **Here is your Direct Download Link:**\n\n{link}")
 
-async def start_services():
-    await bot.start()
+async def main():
+    await bot.start(bot_token=BOT_TOKEN)
     app = web.Application()
     app.add_routes(routes)
     runner = web.AppRunner(app)
@@ -68,9 +65,4 @@ async def start_services():
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(start_services())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
