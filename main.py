@@ -3,7 +3,6 @@ import re
 import asyncio
 import uvloop
 
-# Async loop patch for Render Python 3.14
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 from telethon import TelegramClient, events
@@ -21,7 +20,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/")
 async def root_handler(request):
-    return web.Response(text="Server Active")
+    return web.Response(text="Server Active on Koyeb")
 
 @routes.get("/watch/{msg_id}")
 async def watch_handler(request):
@@ -34,11 +33,11 @@ async def watch_handler(request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Fast Player</title>
+        <title>Fast Stream Player</title>
         <style>
             * {{ margin:0; padding:0; box-sizing:border-box; }}
             body {{ background:#000; display:flex; justify-content:center; align-items:center; height:100vh; overflow:hidden; }}
-            video {{ width:100%; height:100%; max-width:100vw; max-height:100vh; object-fit:contain; }}
+            video {{ width:100%; height:100%; object-fit:contain; }}
         </style>
     </head>
     <body>
@@ -58,7 +57,7 @@ async def stream_handler(request):
         msg = file_store.get(msg_id)
         
         if not msg or not msg.media:
-            return web.Response(status=404, text="Video expired. Please re-send video to bot.")
+            return web.Response(status=404, text="Video expired or Server Restarted.")
 
         file_size = getattr(msg.file, 'size', 0)
         mime_type = getattr(msg.file, 'mime_type', 'video/mp4') or 'video/mp4'
@@ -79,14 +78,13 @@ async def stream_handler(request):
                 'Accept-Ranges': 'bytes',
                 'Content-Length': str(length),
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
             }
             
             response = web.StreamResponse(status=206, headers=headers)
             await response.prepare(request)
             
-            # Fast Parallel Chunk Processing
-            async for chunk in bot.iter_download(msg.media, offset=start, limit=length, request_size=512 * 1024):
+            # Ultra Fast Chunk Size
+            async for chunk in bot.iter_download(msg.media, offset=start, limit=length, request_size=1024 * 1024):
                 await response.write(chunk)
                 
             return response
@@ -100,7 +98,7 @@ async def stream_handler(request):
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        async for chunk in bot.iter_download(msg.media, request_size=512 * 1024):
+        async for chunk in bot.iter_download(msg.media, request_size=1024 * 1024):
             await response.write(chunk)
             
         return response
@@ -113,8 +111,7 @@ async def handle_files(event):
     if event.message.media:
         file_store[event.message.id] = event.message
         
-        host_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
-        app_url = f"https://{host_name}" if host_name else os.environ.get("APP_URL", "http://localhost:8080")
+        app_url = os.environ.get("KOYEB_PUBLIC_URL", os.environ.get("APP_URL", "http://localhost:8080"))
 
         watch_link = f"{app_url}/watch/{event.message.id}"
         await event.reply(f"🎬 **Stream Link:**\n\n{watch_link}")
