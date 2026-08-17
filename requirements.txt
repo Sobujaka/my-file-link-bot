@@ -1,4 +1,0 @@
-telethon
-aiohttp
-cryptg
-uvloop
